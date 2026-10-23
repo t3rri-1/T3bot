@@ -1,0 +1,48 @@
+{
+	"name": "t3rri",
+	"description": "Simple WhatsApp By Nova Team",
+	"logo": "https://avatars.githubusercontent.com/u/188756392?v=4",
+	"repository": "https://github.com/t3rri-1/T3bot",
+	"stack": "container",
+	"success_url": "/",
+	"buildpacks": [
+		{
+			"url": "heroku/nodejs"
+		}
+	],
+	"env": {
+		"SESSION_ID": {
+			"description": "Session ID to Run Bot. Leave empty to get a pairing code for the SUDO number instead",
+			"required": false
+		},
+		"SUDO": {
+			"description": "Your WhatsApp number with country code (e.g. 2567XXXXXXXX). Admin user, and the number a pairing code is requested for when SESSION_ID is empty",
+			"value": "",
+			"required": false
+		},
+		"BOT_INFO": {
+			"description": "Bot Owner, Bot Name, URL LOGO",
+			"value": "NovaTeam;Nova Bot;https://avatars.githubusercontent.com/u/188756392?v=4",
+			"required": false
+		},
+		"STICKER_PACK": {
+			"description": "Exif Metadata for Sticker Pack",
+			"value": "Made by;T3rriMulti Device Bot",
+			"required": false
+		},
+		"TIME_ZONE": {
+			"description": "Time Zone for Bot",
+			"value": "Africa/Kampla",
+			"required": false
+		},
+		"WARN_COUNT": {
+			"description": "Number of Warnings before Actions",
+			"value": "3",
+			"required": false
+		},
+		"DEBUG": {
+			"description": "Development Purposes",
+			"value": "false"
+		}
+	}
+}
