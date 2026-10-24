@@ -1,0 +1,12 @@
+node_modules
+database.db
+.env
+test.js
+session
+.update-state.json
+.update-state.json.tmp
+tmp
+.session-invalid
+database.db-wal
+database.db-shm
+database.db-journal
