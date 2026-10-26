@@ -1,6 +1,6 @@
 {
 	"name": "t3rri",
-	"version": "1.0.9",
+	"version": "2.0.0",
 	"description": "A simple WhatsApp bot built by Me.",
 	"main": "index.js",
 	"type": "module",
