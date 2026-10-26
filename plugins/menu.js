@@ -29,7 +29,7 @@ bot(
 			timeZone: config.TIME_ZONE
 		})}
 ┃々│ Version: ${config.VERSION}
-╰─────────────\`\`\`\n`;
+╰───────────\`\`\`\n`;
 
 		const commandsByType = commands
 			.filter(cmd => cmd.pattern && !cmd.dontAddCommandList)
@@ -53,7 +53,7 @@ bot(
 				menuInfo += `│${totalCommands}· ${cmd}\n`;
 				totalCommands++;
 			});
-			menuInfo += `╰────────────\n`;
+			menuInfo += `╰─────────\n`;
 		});
 		return await message.send(menuInfo);
 	}

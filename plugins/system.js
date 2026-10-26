@@ -1,8 +1,18 @@
 import { performance } from 'perf_hooks';
+import { randomBytes } from 'crypto';
 import { bot } from '#lib';
 import { manageProcess, runtime } from '#utils';
 import { getBuffer, getJson } from '#utils';
 import os from 'os';
+
+function formatRuntime(seconds) {
+	seconds = Number(seconds);
+	const h = Math.floor(seconds / 3600);
+	const m = Math.floor((seconds % 3600) / 60);
+	const s = Math.floor(seconds % 60);
+	
+	return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
 
 bot(
 	{
@@ -27,7 +37,31 @@ bot(
 		type: 'system',
 	},
 	async message => {
-		return await message.send(`\`\`\`Runtime: ${runtime(process.uptime())}\`\`\``);
+		const uptimeSeconds = process.uptime();
+		const time = formatRuntime(uptimeSeconds);
+		const customId = () => 'A5' + randomBytes(15).toString('hex').toUpperCase();
+
+		await message.client.relayMessage(
+			message.jid,
+			{
+				interactiveResponseMessage: {
+					body: {
+						text: '\0',
+						format: 1
+					},
+					nativeFlowResponseMessage: {
+						name: 'galaxy_message',
+						paramsJson: JSON.stringify({
+							wa_flow_response_params: {
+								title: `⌛ ${time}`
+							}
+						}),
+						version: 3
+					}
+				}
+			},
+			{ quoted: message.key, messageId: customId() }
+		);
 	},
 );
 
@@ -93,13 +127,7 @@ bot(
 
 		const averageSpeed = Math.round(cpus.reduce((sum, cpu) => sum + cpu.speed, 0) / coreCount);
 
-		const response = `CPU Information:
-Model: ${model}
-Cores: ${coreCount}
-Average Speed: ${averageSpeed} MHz
-Architecture: ${os.arch()}
-Platform: ${os.platform()}
-Uptime: ${Math.floor(os.uptime() / 60)} minutes`;
+		const response = `CPU Information:\nModel: ${model}\nCores: ${coreCount}\nAverage Speed: ${averageSpeed} MHz\nArchitecture: ${os.arch()}\nPlatform: ${os.platform()}\nUptime: ${Math.floor(os.uptime() / 60)} minutes`;
 
 		await message.send('```' + response + '```');
 	},

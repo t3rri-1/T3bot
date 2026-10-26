@@ -1,408 +1,219 @@
 import os from 'os'
 import fs from 'fs'
-import crypto from 'crypto'
 import { execSync } from 'child_process'
-import { bot } from '#lib'
+import { bot, A2UI, sendA2UIWidget } from '#lib'
+import { config } from '#config'
 
-function formatSize(bytes) {
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let i = 0,
-    v = bytes
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++
-  }
-  return `${v.toFixed(i === 0 ? 0 : 2)} ${units[i]}`
-}
+// Header image of the card. It has to be a public URL, A2UI can't take a local file.
+const THUMB_URL =
+  'https://raw.githubusercontent.com/RennZSync/uploaders/main/anu/1790585777057-60027c4b.jpg'
 
-function duration(ms) {
-  const t = Math.floor(ms / 1000)
-  const d = Math.floor(t / 86400)
-  const h = Math.floor((t % 86400) / 3600)
-  const m = Math.floor((t % 3600) / 60)
-  const s = t % 60
-  return [
-    ...(d ? [`${d} day${d === 1 ? '' : 's'}`] : []),
-    ...(h ? [`${h} hr`] : []),
-    ...(m ? [`${m} min`] : []),
-    `${s} sec`,
-  ].join(', ')
-}
-
-function getUsername() {
-  try {
-    return os.userInfo().username
-  } catch {
-    return '-'
-  }
-}
-
-function getDisk() {
-  try {
-    const out = execSync('df -kP /', {
-      timeout: 3000
-    }).toString().trim().split('\n')
-    const row = out.slice(1).map(l => l.trim().split(/\s+/))[0]
-    const total = +row[1] * 1024
-    const used = +row[2] * 1024
-    return {
-      total,
-      used,
-      percent: +(used / total * 100).toFixed(1)
-    }
-  } catch {
-    return null
-  }
-}
-
-function getSwap() {
-  try {
-    const f = fs.readFileSync('/proc/meminfo', 'utf8')
-    const total = ((f.match(/^SwapTotal:\s+(\d+)/) || [0, 0])[1]) * 1024
-    const free = ((f.match(/^SwapFree:\s+(\d+)/) || [0, 0])[1]) * 1024
-    if (!total) return null
-    const used = total - free
-    return {
-      total,
-      used,
-      free,
-      percent: +(used / total * 100).toFixed(1)
-    }
-  } catch {
-    return null
-  }
-}
-
-function getNetwork() {
-  const ni = os.networkInterfaces()
-  const list = []
-  let primary = ''
-  for (const [name, addrs] of Object.entries(ni)) {
-    for (const a of addrs || []) {
-      if (a.internal) continue
-      list.push(`${name} · ${a.address}`)
-      if (!primary && a.family === 'IPv4') primary = a.address
-    }
-  }
-  return {
-    list: list.slice(0, 6),
-    count: Object.keys(ni).filter(k => (ni[k] || []).some(a => !a.internal)).length,
-    primary: primary || list[0]?.split(' · ')[1] || '-',
-  }
-}
-
-function buildSurface(d) {
-  const comps = []
-  const rootKids = []
-  const ctr = {}
-
-  const T = (id, text, variant = 'body') =>
-    comps.push({
-      component: 'Text',
-      id,
-      text: String(text),
-      variant
-    })
-
-  const SL = (id, label, value) =>
-    comps.push({
-      component: 'Slider',
-      id,
-      label,
-      max: 100,
-      min: 0,
-      value
-    })
-
-  function card(id, title, items) {
-    const contentId = `${id}_content`
-    const kids = [`${id}_title`, `${id}_divider`]
-    comps.push({
-      component: 'Card',
-      id,
-      child: contentId
-    })
-    for (const it of items) {
-      const kidId = `${id}_${ctr[id] = (ctr[id] || 0) + 1}`
-      if (it.slider) SL(kidId, it.label, it.value)
-      else T(kidId, it.text, it.variant || 'body')
-      kids.push(kidId)
-    }
-    comps.push({
-      component: 'Column',
-      id: contentId,
-      children: kids
-    })
-    T(`${id}_title`, title, 'h2')
-    comps.push({
-      component: 'Divider',
-      id: `${id}_divider`
-    })
-  }
-
-  rootKids.push('hero')
-  comps.push({
-    component: 'Card',
-    id: 'hero',
-    child: 'hero_content'
-  })
-  comps.push({
-    component: 'Column',
-    id: 'hero_content',
-    children: ['hero_title', 'hero_subtitle', 'hero_status'],
-  })
-  T('hero_title', 'Server Inspector', 'h1')
-  T('hero_subtitle', 'Live operating system information', 'caption')
-  T('hero_status', `● ${d.botName}`)
-
-  rootKids.push('system')
-  card('system', 'System Information', [{
-      text: `OS · ${d.osType}`
-    },
-    {
-      text: `Kernel · ${d.kernel}`
-    },
-    {
-      text: `Architecture · ${d.arch}`
-    },
-    {
-      text: `CPU · ${d.cpuShort}`
-    },
-    {
-      text: `CPU Cores · ${d.cores}`
-    },
-    {
-      text: `Hostname · ${d.hostname}`
-    },
-    {
-      text: `User · ${d.username}`
-    },
-    {
-      text: `Endianness · ${d.endianness}`
-    },
-  ])
-
-  rootKids.push('resources')
-  const resItems = [{
-      slider: true,
-      label: `CPU · ${d.cpuPercent}%`,
-      value: d.cpuPercent
-    },
-    {
-      slider: true,
-      label: `RAM · ${d.memPercent}%`,
-      value: d.memPercent
-    },
-  ]
-  if (d.disk) resItems.push({
-    slider: true,
-    label: `SSD Storage · ${d.disk.percent}%`,
-    value: d.disk.percent
-  })
-  resItems.push({
-    variant: 'caption',
-    text: [
-      `CPU Load · ${d.load1} · ${d.load5} · ${d.load15}`,
-      `RAM · ${d.memUsed} / ${d.memTotal}`,
-      ...(d.disk ? [`SSD · ${formatSize(d.disk.used)} / ${formatSize(d.disk.total)}`] : []),
-    ].join('\n'),
-  })
-  card('resources', 'System Resources', resItems)
-
-  rootKids.push('node_memory')
-  card('node_memory', 'Node.js Memory', [{
-      text: `RSS · ${d.rss}`
-    },
-    {
-      text: `Heap Total · ${d.heapTotal}`
-    },
-    {
-      text: `Heap Used · ${d.heapUsed}`
-    },
-    {
-      text: `External · ${d.external}`
-    },
-    {
-      text: `ArrayBuffers · ${d.arrayBuffers}`
-    },
-  ])
-
-  if (d.swap) {
-    rootKids.push('swap')
-    card('swap', 'Swap Memory', [{
-        slider: true,
-        label: `Swap Usage · ${d.swap.percent}%`,
-        value: d.swap.percent
-      },
-      {
-        text: `Total · ${formatSize(d.swap.total)}`
-      },
-      {
-        text: `Used · ${formatSize(d.swap.used)}`
-      },
-      {
-        text: `Free · ${formatSize(d.swap.free)}`
-      },
-    ])
-  }
-
-  rootKids.push('network')
-  card('network', 'Network', [{
-      text: `Primary IP · ${d.netPrimary}`
-    },
-    {
-      text: `Interfaces · ${d.netCount}`
-    },
-    {
-      variant: 'caption',
-      text: d.netList
-    },
-  ])
-
-
-  rootKids.push('runtime')
-  card('runtime', 'Runtime', [{
-      text: `Runtime · ${d.runtimeName}`
-    },
-    {
-      text: `${d.runtimeName} Version · ${d.runtimeVersion}`
-    },
-    {
-      text: `Node Compatibility · ${d.nodeCompat}`
-    },
-    {
-      text: `JavaScript Engine · ${d.engine}`
-    },
-    {
-      text: `PID · ${d.pid}`
-    },
-    {
-      text: `Bot Uptime · ${d.botUptime}`
-    },
-    {
-      text: `System Uptime · ${d.sysUptime}`
-    },
-    {
-      variant: 'caption',
-      text: `Executable · ${d.executable}`
-    },
-  ])
-
-  comps.unshift({
-    component: 'Column',
-    id: 'root',
-    children: rootKids
-  })
-
-  return {
-    createSurface: {
-      catalogId: 'https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json',
-      components: comps,
-      surfaceId: `ping-os=${Date.now()}`,
-    },
-    version: 'v0.9',
-  }
-}
+const botName = () => (config.BOT_INFO || '').split(';')[1]?.trim() || 'T3rri Bot'
 
 bot(
   {
     pattern: 'ping2|speed2',
     public: true,
-    desc: 'Server inspector: system, memory, disk and network in one card',
+    desc: 'Server info card: status, system, CPU, memory, runtime and storage',
     type: 'system',
   },
   async message => {
     const start = Date.now()
-    await message.react('🍡')
-
-    const cores = os.cpus().length
-    const load = os.loadavg()
-    const totalMem = os.totalmem(),
-      freeMem = os.freemem()
-    const usedMem = totalMem - freeMem
-    const heap = process.memoryUsage()
-    const isBun = typeof Bun !== 'undefined'
     const conn = message.client
-    const net = getNetwork()
 
-    const d = {
-      botName: conn?.user?.name || String(conn?.user?.id || '').split('@')[0].split(':')[0] || 'WhatsApp Bot',
-      speed: Date.now() - start,
-      osType: `${os.type()} ${os.release()}`,
-      kernel: os.release(),
-      arch: os.arch(),
-      cpuShort: (os.cpus()[0]?.model || 'Unknown').replace(/\(R\)|\(TM\)/g, '').trim(),
-      cores,
-      hostname: os.hostname(),
-      username: getUsername(),
-      endianness: os.endianness(),
-      cpuPercent: +Math.min(99.9, (load[0] / Math.max(cores, 1)) * 100).toFixed(1),
-      load1: load[0].toFixed(2),
-      load5: load[1].toFixed(2),
-      load15: load[2].toFixed(2),
-      memPercent: +((usedMem / totalMem) * 100).toFixed(1),
-      memUsed: formatSize(usedMem),
-      memTotal: formatSize(totalMem),
-      rss: formatSize(heap.rss),
-      heapTotal: formatSize(heap.heapTotal),
-      heapUsed: formatSize(heap.heapUsed),
-      external: formatSize(heap.external),
-      arrayBuffers: formatSize(heap.arrayBuffers ?? 0),
-      disk: getDisk(),
-      swap: getSwap(),
-      netPrimary: net.primary,
-      netCount: net.count,
-      netList: net.list.join('\n') || '-',
-      runtimeName: isBun ? 'Bun' : 'Node.js',
-      runtimeVersion: isBun ? Bun.version : process.version,
-      nodeCompat: `v${process.versions.node}`,
-      engine: isBun ? 'JavaScriptCore' : `V8 ${process.versions.v8}`,
-      pid: process.pid,
-      botUptime: duration(process.uptime() * 1000),
-      sysUptime: duration(os.uptime() * 1000),
-      executable: process.execPath || '-',
-    }
+    const totalMem = os.totalmem()
+    const freeMem = os.freemem()
+    const usedMem = totalMem - freeMem
+    const memPercent = ((usedMem / totalMem) * 100).toFixed(1)
 
-    const surface = buildSurface(d)
+    const processMem = process.memoryUsage()
 
+    // os.cpus() can come back empty (Termux, some containers)
+    const cpus = os.cpus()
+    const cpu = cpus[0] || {}
+
+    let disk = '-'
+    try {
+      disk = execSync('df -h / | tail -1', {
+        timeout: 3000,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      })
+        .toString()
+        .trim()
+        .replace(/\s+/g, ' ')
+    } catch {}
+
+    let distro = '-'
+    try {
+      const release = fs.readFileSync('/etc/os-release', 'utf8')
+      distro = release.match(/^PRETTY_NAME="(.+)"$/m)?.[1] || '-'
+    } catch {}
+
+    let tmpFiles = '-'
+    try {
+      tmpFiles = fs.readdirSync(os.tmpdir()).length
+    } catch {}
+
+    const speed = Date.now() - start
+
+    const ui = new A2UI()
+
+    const thumbnail = ui.image(THUMB_URL, { variant: 'header' })
+
+    const title = ui.text('Server Information', {
+      variant: 'h1'
+    })
+
+    const statusCard = ui.card(
+      ui.column([
+        ui.text('Bot Status', { variant: 'h2' }),
+
+        ui.text(
+          `Running On: ${
+            process.env.USER === 'root'
+              ? 'VPS'
+              : 'HOSTING (PANEL)'
+          }`
+        ),
+
+        ui.text(`Bot Speed: ${speed} ms`),
+
+        ui.text(
+          `Bot Uptime: ${toTime(process.uptime() * 1000)}`,
+          { variant: 'caption' }
+        ),
+
+        ui.text(
+          `Server Uptime: ${toTime(os.uptime() * 1000)}`,
+          { variant: 'caption' }
+        )
+      ])
+    )
+
+    const systemCard = ui.card(
+      ui.column([
+        ui.text('System', { variant: 'h2' }),
+
+        ui.text(`Distro: ${distro}`),
+        ui.text(`Platform: ${os.platform()}`),
+        ui.text(`Type: ${os.type()}`),
+        ui.text(`Release: ${os.release()}`),
+        ui.text(`Architecture: ${os.arch()}`),
+        ui.text(`Hostname: ${os.hostname()}`),
+        ui.text(`Node.js: ${process.version}`),
+        ui.text(`PID: ${process.pid}`)
+      ])
+    )
+
+    const cpuCard = ui.card(
+      ui.column([
+        ui.text('CPU', { variant: 'h2' }),
+
+        ui.text(`Model: ${cpu.model || '-'}`),
+        ui.text(`Cores: ${cpus.length}`),
+        ui.text(`Speed: ${cpu.speed ? `${cpu.speed} MHz` : '-'}`),
+
+        ui.text(
+          `Load Average: ${os.loadavg()
+            .map(v => v.toFixed(2))
+            .join(' | ')}`,
+          { variant: 'caption' }
+        )
+      ])
+    )
+
+    const memoryCard = ui.card(
+      ui.column([
+        ui.text('Memory', { variant: 'h2' }),
+
+        ui.text(`Used: ${formatSize(usedMem)}`),
+        ui.text(`Free: ${formatSize(freeMem)}`),
+        ui.text(`Total: ${formatSize(totalMem)}`),
+
+        ui.text(
+          `Usage: ${memPercent}%`,
+          { variant: 'caption' }
+        )
+      ])
+    )
+
+    const processCard = ui.card(
+      ui.column([
+        ui.text('Process Memory', { variant: 'h2' }),
+
+        ui.text(`RSS: ${formatSize(processMem.rss)}`),
+        ui.text(`Heap Total: ${formatSize(processMem.heapTotal)}`),
+        ui.text(`Heap Used: ${formatSize(processMem.heapUsed)}`),
+        ui.text(`External: ${formatSize(processMem.external)}`),
+        ui.text(`Array Buffers: ${formatSize(processMem.arrayBuffers ?? 0)}`)
+      ])
+    )
+
+    const runtimeCard = ui.card(
+      ui.column([
+        ui.text('Runtime', { variant: 'h2' }),
+
+        ui.text(`V8: ${process.versions.v8 ?? '-'}`),
+        ui.text(`OpenSSL: ${process.versions.openssl ?? '-'}`),
+        ui.text(`UV: ${process.versions.uv ?? '-'}`),
+        ui.text(`Zlib: ${process.versions.zlib ?? '-'}`),
+        ui.text(`ICU: ${process.versions.icu ?? '-'}`),
+
+        ui.text(
+          `Environment: ${process.env.NODE_ENV || 'production'}`,
+          { variant: 'caption' }
+        )
+      ])
+    )
+
+    const storageCard = ui.card(
+      ui.column([
+        ui.text('Storage', { variant: 'h2' }),
+
+        ui.text(
+          `Disk: ${disk}`,
+          { variant: 'caption' }
+        ),
+
+        ui.text(
+          `Tmp Files: ${tmpFiles}`,
+          { variant: 'caption' }
+        )
+      ])
+    )
+
+    ui.root([
+      thumbnail,
+      title,
+      statusCard,
+      systemCard,
+      cpuCard,
+      memoryCard,
+      processCard,
+      runtimeCard,
+      storageCard
+    ])
+
+    // sent as plain text if WhatsApp refuses the card
     const fallbackText =
-      `🔍 *PONG!* • ${d.speed}ms\n\n` +
-      `💻 ${d.cpuShort} • ${d.cores} threads\n` +
-      `🧠 RAM: ${d.memPercent}% (${d.memUsed} / ${d.memTotal})\n` +
-      `📦 ${d.runtimeName} ${d.runtimeVersion} • Heap ${d.heapUsed}\n` +
-      (d.disk ? `🗄️ Disk: ${d.disk.percent}% (${formatSize(d.disk.used)} / ${formatSize(d.disk.total)})\n` : '') +
-      `⏱️ Uptime: ${d.botUptime}`
+      `🔍 *PONG!* • ${speed}ms\n\n` +
+      `💻 ${cpu.model || 'Unknown CPU'} • ${cpus.length} core${cpus.length === 1 ? '' : 's'}\n` +
+      `🧠 RAM: ${memPercent}% (${formatSize(usedMem)} / ${formatSize(totalMem)})\n` +
+      `📦 Node.js ${process.version} • Heap ${formatSize(processMem.heapUsed)}\n` +
+      (disk !== '-' ? `🗄️ Disk: ${disk}\n` : '') +
+      `⏱️ Uptime: ${toTime(process.uptime() * 1000)}`
 
     try {
-      const msg = {
-        messageContextInfo: {
-          threadId: [],
-          messageSecret: new Uint8Array(crypto.randomBytes(32)),
-        },
-        interactiveMessage: {
-          body: {
-            text: ''
-          },
-          bloksWidget: {
-            uuid: crypto.randomUUID(),
-            data: JSON.stringify(surface),
-            type: 'im_a2ui',
-          },
-          contextInfo: {},
-          nativeFlowMessage: {
-            buttons: [{
-              name: ''
-            }],
-            messageParamsJson: '{}',
-          },
-        },
-      }
+      await sendA2UIWidget(conn, message.jid, {
+        footer: `${botName()} • ${speed} ms`,
 
-      await conn.relayMessage(message.jid, msg, {
-        additionalNodes: [{
-          tag: 'biz',
-          attrs: {}
-        }],
+        a2ui: ui,
+
+        contextInfo: {
+          expiration: 7776000
+        },
+
+        singleScreen: true
       })
     } catch (e) {
       console.log('[ping2] the A2UI card was not accepted, sent text instead:', e?.message || e)
@@ -410,3 +221,31 @@ bot(
     }
   }
 )
+
+
+function toTime(ms) {
+  const d = Math.floor(ms / 86400000)
+  const h = Math.floor((ms % 86400000) / 3600000)
+  const m = Math.floor((ms % 3600000) / 60000)
+  const s = Math.floor((ms % 60000) / 1000)
+
+  return [
+    d ? `${d}d` : '',
+    h ? `${h}h` : '',
+    m ? `${m}m` : '',
+    `${s}s`
+  ].filter(Boolean).join(' ')
+}
+
+
+function formatSize(bytes) {
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB']
+  let i = 0
+
+  while (bytes >= 1024 && i < units.length - 1) {
+    bytes /= 1024
+    i++
+  }
+
+  return `${bytes.toFixed(2)} ${units[i]}`
+}
