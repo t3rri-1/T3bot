@@ -1,7 +1,14 @@
 import { config } from '#config';
-import { bot, commands, getConfigValues } from '#lib';
+import { bot, Button, commands, getConfigValues } from '#lib';
+import { getConfig } from '#sql';
 import { formatBytes, runtime } from '#utils';
+import { applyFont } from '../bot/fontlist.js';
 import { platform, totalmem, freemem } from 'os';
+
+const more = String.fromCharCode(8206);
+const readmore = more.repeat(4001);
+const REPO = 'https://github.com/t3rri-1/T3bot';
+const CHANNEL = 'https://whatsapp.com/channel/0029Vb57ZHh7IUYcNttXEB3y';
 
 bot(
 	{
@@ -29,7 +36,7 @@ bot(
 			timeZone: config.TIME_ZONE
 		})}
 ┃々│ Version: ${config.VERSION}
-╰───────────\`\`\`\n`;
+╰───────────\`\`\`\n${readmore}`;
 
 		const commandsByType = commands
 			.filter(cmd => cmd.pattern && !cmd.dontAddCommandList)
@@ -55,7 +62,24 @@ bot(
 			});
 			menuInfo += `╰─────────\n`;
 		});
-		return await message.send(menuInfo);
+		let fontStyle = 1;
+		try {
+			({ fontStyle } = await getConfig());
+		} catch {
+			
+		}
+		const body = fontStyle && fontStyle !== 1 ? applyFont(menuInfo, fontStyle) : menuInfo;
+
+		try {
+			return await new Button(message.client)
+				.setBody(body)
+				.addUrl('🌐 Repo', REPO)
+				.addUrl('📢 Channel', CHANNEL)
+				.send(message.jid);
+		} catch {
+	
+			return await message.send(`${menuInfo}\n\n🌐 Repo: ${REPO}\n📢 Channel: ${CHANNEL}`);
+		}
 	}
 );
 

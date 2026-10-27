@@ -67,7 +67,7 @@ export const CONFIG_CMDS = DATABASE.define(
 		fontStyle: {
 			type: DataTypes.INTEGER,
 			allowNull: false,
-			defaultValue: 33,
+			defaultValue: 42,
 		},
 		disablegc: {
 			type: DataTypes.BOOLEAN,

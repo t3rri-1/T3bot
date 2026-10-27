@@ -1,17 +1,16 @@
 import { bot } from '#lib';
 import { Button } from '../lib/button.js';
 import {
-	convertToMp3,
+	cleanTikTokLink,
 	extractUrl,
-	getFileAndSave,
+	getTikTok,
+	instagramDownloader,
 	isfacebook,
 	isInsta,
 	isReddit,
 	isRumble,
-	isTikTok,
 	isUrl,
-	toTwitter,
-	T3
+	toTwitter
 } from '#utils';
 import { getBuffer, getJson } from '#utils';
 
@@ -59,14 +58,26 @@ bot(
 		type: 'download'
 	},
 	async (message, match) => {
-		let url;
-		url = match || message.reply_message.text;
-		if (!url) return message.send('_No Instagram link found!_');
-		url = extractUrl(url);
-		url = url.replace(/https:\/\/www\.instagram\.com\/([^\/]+)\//, 'https://www.instagram.com/');
-		if (!isInsta(url)) return message.send('_Provide Instagram link!_');
-		const data = (await getJson(`${API}/downloader/insta2?apikey=${KEY}&url=${url}`)).result;
-		return await message.sendFromUrl(data.video);
+		const input = match || message.reply_message?.text;
+		if (!input) return message.send('_No Instagram link found!_');
+		const url = extractUrl(input);
+		if (!url || !isInsta(url)) return message.send('_Provide Instagram link!_');
+
+		const data = await instagramDownloader(url);
+		try {
+			// WhatsApp albums stop at 10, and every file is held in memory while it is sent
+			for (const [i, item] of data.media.slice(0, 10).entries()) {
+				const file = await getBuffer(item.url);
+				await message.send(file, {
+					type: item.type,
+					...(item.type === 'video' ? { mimetype: 'video/mp4' } : {}),
+					caption: i === 0 ? clip(data.caption, 500) || undefined : undefined
+				});
+			}
+		} catch (err) {
+			if (err?.tooLarge) return await message.send('_That file is too large to send from this host_');
+			throw err;
+		}
 	}
 );
 
@@ -127,10 +138,6 @@ bot(
 	}
 );
 
-const TIKTOK_API = 'https://aj-ibra.zone.id/api/tiktok';
-const TIKTOK_CACHE_MS = 10 * 60_000;
-const tiktokCache = new Map();
-
 const clip = (text, max) => {
 	const clean = String(text ?? '')
 		.replace(/\s+/g, ' ')
@@ -139,27 +146,6 @@ const clip = (text, max) => {
 };
 
 const prefixOf = message => Array.from(message.prefix || '.')[0] || '.';
-
-const cleanTikTokLink = input => {
-	const link = extractUrl(String(input || ''));
-	if (!link || !isTikTok(link)) return null;
-	try {
-		const url = new URL(link);
-		return `${url.origin}${url.pathname}`;
-	} catch {
-		return null;
-	}
-};
-
-const getTikTok = async link => {
-	const hit = tiktokCache.get(link);
-	if (hit && Date.now() - hit.at < TIKTOK_CACHE_MS) return hit.data;
-	const res = await getJson(`${TIKTOK_API}?url=${encodeURIComponent(link)}`).catch(() => null);
-	if (!res?.success || !res.result) return null;
-	tiktokCache.set(link, { at: Date.now(), data: res.result });
-	if (tiktokCache.size > 30) tiktokCache.delete(tiktokCache.keys().next().value);
-	return res.result;
-};
 
 const row = (icon, value) => (value ? `│☆│ ${icon} ${value}` : null);
 
@@ -281,70 +267,6 @@ bot(
 		type: 'download'
 	},
 	(message, match) => sendTikTok(message, match, 'mp4')
-);
-
-bot(
-	{
-		pattern: 'play',
-		public: true,
-		desc: 'Searchs and Downloads Audio',
-		type: 'download'
-	},
-	async (message, match) => {
-		if (!match) return message.send('_Give me song name to search for!_');
-		if (isUrl(match)) return message.send('_No urls allowed, just name of your song_');
-		const url = (await getJson(`${API}/downloader/yt-search?apikey=${KEY}&q=${match}`)).result[0]
-			.url;
-		const data = (await getJson(`${API}/downloader/yt-audio?apikey=${KEY}&url=${url}`)).result;
-		const { title, desc, thumb } = data;
-		const video = await T3.youtube(url, { mp3: true });
-		const mp3 = await getFileAndSave(video.url);
-		const song = await convertToMp3(mp3);
-		return await message.send(song, {
-			mimetype: 'audio/mpeg',
-			ptt: false,
-			contextInfo: {
-				externalAdReply: {
-					title: title,
-					body: desc,
-					thumbnail: await getBuffer(thumb),
-					renderLargerThumbnail: false,
-					showAdAttribution: true
-				}
-			}
-		});
-	}
-);
-
-bot(
-	{
-		pattern: 'video',
-		public: true,
-		desc: 'Searchs and Downloads Video',
-		type: 'download'
-	},
-	async (message, match) => {
-		if (!match) return message.send('_Give me video name to search for!_');
-		if (isUrl(match)) return message.send('_No urls allowed, just name of your video_');
-		const url = (await getJson(`${API}/downloader/yt-search?apikey=${KEY}&q=${match}`)).result[0]
-			.url;
-		const data = (await getJson(`${API}/downloader/yt-audio?apikey=${KEY}&url=${url}`)).result;
-		const { title, desc, thumb } = data;
-		const res = await T3.youtube(url, { mp4: true });
-		const video = await getBuffer(res.url);
-		return await message.send(video, {
-			mimetype: 'video/mp4',
-			contextInfo: {
-				externalAdReply: {
-					title: title,
-					body: desc,
-					thumbnail: await getBuffer(thumb),
-					renderLargerThumbnail: false,
-					showAdAttribution: true
-				}
-			}
-		});
-	}
 );
 
 const rumble = new Map();

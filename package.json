@@ -37,7 +37,7 @@
 	"dependencies": {
 		"@ffmpeg-installer/ffmpeg": "^1.1.0",
 		"axios": "^1.7.9",
-        "baileys": "npm:@musteqeem/baileys@1.0.7",
+        "baileys": "^v7.0.0-rc.14",
 		"dotenv": "^16.4.7",
 		"file-type": "^19.6.0",
 		"fluent-ffmpeg": "^2.1.3",

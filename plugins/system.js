@@ -95,7 +95,7 @@ bot(
 	{
 		pattern: 'logout',
 		public: false,
-		desc: 'End your Xstro Session',
+		desc: 'End your T3rri Session',
 		type: 'system',
 	},
 	async (message, match) => {
