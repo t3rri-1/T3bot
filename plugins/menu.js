@@ -4,6 +4,16 @@ import { getConfig } from '#sql';
 import { formatBytes, runtime } from '#utils';
 import { applyFont } from '../bot/fontlist.js';
 import { platform, totalmem, freemem } from 'os';
+import { readFileSync } from 'fs';
+
+// The version in package.json. It is read each time the menu is shown, so an update shows up without a restart.
+const botVersion = () => {
+	try {
+		return JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version || 'unknown';
+	} catch {
+		return 'unknown';
+	}
+};
 
 const more = String.fromCharCode(8206);
 const readmore = more.repeat(4001);
@@ -35,8 +45,9 @@ bot(
 ┃々│ Time: ${new Date().toLocaleTimeString('en-US', {
 			timeZone: config.TIME_ZONE
 		})}
-┃々│ Version: ${config.VERSION}
-╰───────────\`\`\`\n${readmore}`;
+┃々│ Version: ${botVersion()}
+╰───────────\`\`\`\n
+${readmore}`;
 
 		const commandsByType = commands
 			.filter(cmd => cmd.pattern && !cmd.dontAddCommandList)

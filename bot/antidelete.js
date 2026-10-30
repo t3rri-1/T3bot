@@ -1,90 +1,61 @@
-import { isJidGroup } from 'baileys';
-import { getAnti, getConfig } from '#sql';
-import { applyFont } from './fontlist.js';
+/**
+ * Anti-delete: a deleted message is resent as it was (no extra text), carrying an "ad reply" card:
+ * Deleted Message / Deleted by ...
+ *
+ * Groups: the notice goes into the group. Private chats: it goes to the bot's own inbox.
+ * Switched with the `antidelete` command.
+ *
+ * Edits are bot/antiedit.js, deleted statuses are bot/antistatus.js: they arrive through the same `messages.update`
+ * event, each one handles its own kind.
+ */
+import { isJidGroup, jidNormalizedUser } from 'baileys';
+import { getAnti } from '#sql';
+import { TEXT_TYPES, adReply, displayName, isDeletion, profilePicture, resend, resolve, textOf, typeOf } from './noticeutils.js';
 
-const DeletedText = async (conn, msg, jid, deleteInfo, isGroup, update) => {
-	const messageContent =
-		msg.message?.conversation || msg.message?.extendedTextMessage?.text || 'Unknown content';
+async function handleDelete(conn, update) {
+	const store = await conn.loadMessage(update.key.id);
+	const original = store?.message;
+	if (!original?.message) return;
 
-	// This module sends through the socket directly (not Message.send), so apply the .font setting here.
-	// Only the bot's own wording is styled; the deleted message is quoted exactly as it was written.
-	let fontStyle = 1;
-	try {
-		({ fontStyle } = await getConfig());
-	} catch {
-		// no config available, send plain text
+	const isGroup = isJidGroup(store.jid);
+	if (!(await getAnti(isGroup ? 'gc' : 'dm'))) return;
+
+	const owner = jidNormalizedUser(conn.user.id);
+	const sender = original.sender || (await resolve(conn, original.key.participant || original.key.remoteJid));
+	const deletedBy = isGroup
+		? await resolve(conn, update.key.participant, update.key.participantAlt)
+		: update.key.fromMe
+			? owner
+			: await resolve(conn, update.key.remoteJid, update.key.remoteJidAlt);
+
+	const contextInfo = {
+		mentionedJid: [...new Set([sender, deletedBy].filter(Boolean))],
+		externalAdReply: adReply(
+			'Deleted Message',
+			`Deleted by ${await displayName(conn, deletedBy || sender)}`,
+			await profilePicture(conn, sender)
+		)
+	};
+	const target = isGroup ? store.jid : owner;
+
+	if (TEXT_TYPES.has(typeOf(original))) {
+		// nothing to show but the words themselves: they are the message, with the card
+		const text = textOf(original.message);
+		if (!text) return;
+		await conn.sendMessage(target, { text, contextInfo }, { quoted: original });
+		return;
 	}
-	const style = text => (fontStyle && fontStyle !== 1 ? applyFont(text, fontStyle) : text);
-	deleteInfo = `${style(deleteInfo)}\n\n${style('*Content:*')} ${messageContent}`;
-
-	await conn.sendMessage(
-		jid,
-		{
-			text: deleteInfo,
-			contextInfo: {
-				mentionedJid: isGroup
-					? [update.key.participant, msg.key.participant]
-					: [update.key.remoteJid]
-			}
-		},
-		{ quoted: msg }
-	);
-};
-
-const DeletedMedia = async (conn, msg, jid) => {
-	const antideletedMsg = JSON.parse(JSON.stringify(msg.message));
-	const messageType = Object.keys(antideletedMsg)[0];
-	if (antideletedMsg[messageType]) {
-		antideletedMsg[messageType].contextInfo = {
-			stanzaId: msg.key.id,
-			participant: msg.sender,
-			quotedMessage: msg.message
-		};
-	}
-	await conn.relayMessage(jid, antideletedMsg, {});
-};
+	await resend(conn, target, original, contextInfo);
+}
 
 export const AntiDelete = async (conn, updates) => {
 	for (const update of updates) {
-		if (update.key && (update.update.deleteMessage || update.update?.message === null)) {
-			const store = await conn.loadMessage(update.key.id);
-
-			if (store && store.message) {
-				const msg = store.message;
-				const isGroup = isJidGroup(store.jid);
-				const antiDeleteType = isGroup ? 'gc' : 'dm';
-				const antiDeleteStatus = await getAnti(antiDeleteType);
-				if (!antiDeleteStatus) continue;
-
-				const deleteTime = new Date().toLocaleTimeString('en-GB', {
-					hour: '2-digit',
-					minute: '2-digit',
-					second: '2-digit'
-				});
-
-				let deleteInfo, jid;
-				if (isGroup) {
-					const groupMetadata = await conn.groupMetadata(store.jid);
-					const groupName = groupMetadata.subject;
-					const sender = msg.key.participant?.split('@')[0];
-					const deleter = update.key.participant?.split('@')[0];
-
-					deleteInfo = `*Antidelete Detected*\n\n*Time:* ${deleteTime}\n*Group:* ${groupName}\n*Deleted By:* @${deleter}\n*Sender:* @${sender}`;
-					jid = store.jid;
-				} else {
-					const senderNumber = msg.key.remoteJid?.split('@')[0];
-					const deleterNumber = update.key.remoteJid?.split('@')[0];
-
-					deleteInfo = `*Antidelete Detected*\n\n*Time:* ${deleteTime}\n*Deleted By:* @${deleterNumber}\n*Sender:* @${senderNumber}`;
-					jid = conn.user.id;
-				}
-
-				if (msg.message?.conversation || msg.message?.extendedTextMessage) {
-					await DeletedText(conn, msg, jid, deleteInfo, isGroup, update);
-				} else {
-					await DeletedMedia(conn, msg, jid, deleteInfo, isGroup, update);
-				}
-			}
+		try {
+			// a deleted status is antistatus's
+			if (!isDeletion(update) || update.key.remoteJid === 'status@broadcast') continue;
+			await handleDelete(conn, update);
+		} catch (err) {
+			console.log('[antidelete]', err?.message || err);
 		}
 	}
 };

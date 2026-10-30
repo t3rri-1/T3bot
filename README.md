@@ -48,6 +48,8 @@ Set these as environment variables or in a `.env` file. Everything is optional e
 | `API_ID` | Base URL of the API used by some commands. |
 | `DATABASE_URL` | PostgreSQL URL. Leave unset to use SQLite (`./database.db`). |
 | `PORT` | Port of the keep-alive HTTP page (default `8000`). |
+| `FGSI_API_KEY` | Key for the fgsi.dpdns.org tools (`hdvid`, `img2img`). A shared one is built in, set your own if it stops working. |
+| `ANTITAG_LIMIT` | Members tagged in one message from which `antitag` acts (default `5`). |
 | `DEBUG` | Extra logging while developing. |
 
 

@@ -27,3 +27,6 @@ export * from './group_event.js';
 export * from './autoupdate.js';
 export * from './prefixmode.js';
 export * from './chatbot.js';
+export * from './vv2.js';
+export * from './antistatus.js';
+export * from './antiguard.js';

@@ -61,7 +61,7 @@ bot(
 	{
 		pattern: 'autotype',
 		public: false,
-		desc: 'Show a "typing..." indicator for ~6s before the bot replies',
+		desc: 'Show a "typing..." indicator on every message that is not a command (commands answer straight away)',
 		type: 'settings'
 	},
 	async (message, match) => {
@@ -85,7 +85,7 @@ bot(
 	{
 		pattern: 'autorecord',
 		public: false,
-		desc: 'Show a "recording audio..." indicator for ~6s before the bot replies',
+		desc: 'Show a "recording audio..." indicator on every message that is not a command (commands answer straight away)',
 		type: 'settings'
 	},
 	async (message, match) => {

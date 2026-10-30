@@ -1,6 +1,7 @@
 import { isJidGroup } from 'baileys';
 import { DataTypes } from 'sequelize';
 import { DATABASE } from '#lib';
+import { registerCache, trimMap } from '../lib/memory.js';
 
 export const messageDb = DATABASE.define(
 	'message',
@@ -108,6 +109,12 @@ export const groupParticipantsDb = DATABASE.define(
 // Every message used to cost two queries just to confirm the contact name had not changed.
 const CONTACT_CACHE_MAX = 2000;
 const contactCache = new Map();
+
+// the names are read from the database again when a contact writes
+registerCache('contact-names', level => {
+	if (level === 'hard') contactCache.clear();
+	else trimMap(contactCache, Math.floor(contactCache.size / 2));
+});
 
 const saveContact = async (jid, name) => {
 	if (!jid || !name || isJidGroup(jid)) return;

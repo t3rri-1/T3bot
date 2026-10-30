@@ -1,4 +1,6 @@
 export * from './antidelete.js';
+export * from './antiedit.js';
+export * from './antistatus.js';
 export * from './antilink.js';
 export * from './antifake.js';
 export * from './antispam.js';
@@ -6,6 +8,7 @@ export * from './antiword.js';
 export * from './autokick.js';
 export * from './antiviewonce.js';
 export * from './antitagsw.js';
+export * from './antiguard.js';
 export * from './schedule.js';
 export * from './metadatagc.js';
 export * from './chatbot.js';

@@ -1,5 +1,15 @@
-import { bot } from '#lib';
-import { identifyAudio, toAudioSample } from '#utils';
+import { bot, Button } from '#lib';
+import { getBuffer, identifyAudio, toAudioSample } from '#utils';
+
+const prefixOf = message => Array.from(message.prefix || '.')[0] || '.';
+
+// What the Download button runs. A song with a Spotify link goes to the Spotify downloader (the spotify command);
+// one Spotify did not report is looked up on YouTube instead (the play command), so the button is never a dead end.
+const downloadCommand = (song, prefix) => {
+	const spotify = song.spotify?.external_urls?.spotify;
+	if (spotify) return `${prefix}spotify ${spotify}`;
+	return `${prefix}play ${[song.artist, song.title].filter(Boolean).join(' ')}`;
+};
 
 // Spotify gives a ready image url, Apple Music a template with {w} and {h}
 const coverOf = song =>
@@ -50,6 +60,24 @@ bot(
 
 			const text = songText(song);
 			const cover = coverOf(song);
+
+			// the song with a Download button under it
+			let sent = false;
+			try {
+				const card = new Button(message.client)
+					.setBody(text)
+					.setFooter('Tap Download to get the song')
+					.addReply('⬇️ Download', downloadCommand(song, prefixOf(message)));
+				const picture = cover ? await getBuffer(cover).catch(() => null) : null;
+				if (picture) card.setImage(picture);
+				await card.send(message.jid);
+				sent = true;
+			} catch (err) {
+				console.log('[shazam] could not send the card with the button:', err?.message || err);
+				// without the button the cover and the text below are still the answer
+			}
+			if (sent) return await status.delete().catch(() => {});
+
 			if (cover) {
 				try {
 					await message.client.sendMessage(

@@ -1,7 +1,9 @@
 import { config } from '#config';
+import { sendViewOnceTo, viewOnceOf } from '#bot';
 import { bot, sendConfirmed, serialize } from '#lib';
+import { getVv2, loadMessage, setVv2 } from '#sql';
 import { convertNormalMessageToViewOnce, ModifyViewOnceMessage, toJid } from '#utils';
-import { delay, isJidGroup } from 'baileys';
+import { delay, isJidGroup, jidNormalizedUser } from 'baileys';
 
 bot(
 	{
@@ -14,6 +16,52 @@ bot(
 		if (!message.reply_message.viewonce) return message.send('_Reply A Viewonce Message_');
 		const res = await ModifyViewOnceMessage(message.id, message.client);
 		return message.client.relayMessage(message.jid, res.message, {});
+	}
+);
+
+bot(
+	{
+		pattern: 'vv2',
+		public: false,
+		desc: 'View-once to your inbox: react to one with any emoji (vv2 on / off), or reply to one with vv2',
+		type: 'whatsapp'
+	},
+	async (message, match) => {
+		const option = (match || '').trim().toLowerCase();
+		const prefix = Array.from(message.prefix || '.')[0] || '.';
+
+		if (option === 'on' || option === 'off') {
+			await setVv2(option === 'on');
+			return message.send(
+				option === 'on'
+					? '_vv2 is ON: react to a view-once message with any emoji and it is sent to your inbox_'
+					: '_vv2 is OFF: reacting to a view-once message no longer sends it to your inbox_'
+			);
+		}
+
+		// no reply: show where it stands
+		if (!message.reply_message) {
+			const on = await getVv2();
+			return message.send(
+				[
+					`*vv2* is ${on ? 'ON' : 'OFF'}`,
+					'',
+					'• React to a view-once message with any emoji and it is sent to your inbox',
+					'• Or reply to a view-once message with the command to get it right away',
+					'',
+					`_${prefix}vv2 on_ / _${prefix}vv2 off_ switch the reaction`,
+					'_Do it before the view-once is opened, after that it is gone_'
+				].join('\n')
+			);
+		}
+
+		// a reply: that view-once goes to the inbox of whoever sent the command
+		const stored = (await loadMessage(message.reply_message.id))?.message;
+		if (!stored) return message.send('_I do not have that message saved, so I cannot get it_');
+		if (!viewOnceOf(stored)) return message.send('_Reply to a view-once message_');
+
+		const inbox = message.fromMe ? jidNormalizedUser(message.client.user.id) : message.sender;
+		await sendViewOnceTo(message.client, stored, inbox, text => message.send(text));
 	}
 );
 

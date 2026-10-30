@@ -90,7 +90,7 @@ const watchUrl = id => `https://www.youtube.com/watch?v=${id}`;
 // A file name phones accept: no path or reserved characters, no doubled extension.
 const fileName = (title, ext) => {
 	const name = String(title || '')
-		.replace(/\.(mp3|mp4)$/i, '')
+		.replace(/\.(mp3|mp4|m4a)$/i, '')
 		.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '')
 		.replace(/\s+/g, ' ')
 		.trim()
@@ -110,14 +110,16 @@ const sendYouTube = async (message, source, kind) => {
 		await message.react('⏳').catch(() => {});
 
 		if (kind === 'mp3') {
-			// 256 kbps. It comes as mp3 already, so it goes out as it is, as a document
+			// Every backend is asked at once and the fastest answer is used: an mp3 (256 kbps) or an m4a (AAC).
+			// Neither is converted, it goes out as it is, as a document
 			const { video, download } = await ytmp3(source);
+			const ext = download.format === 'm4a' ? 'm4a' : 'mp3';
 			const audio = await getBuffer(download.downloadUrl);
 			const thumbnail = await getBuffer(`https://i.ytimg.com/vi/${video.id}/mqdefault.jpg`).catch(() => undefined);
 			return await message.send(audio, {
 				type: 'document',
-				mimetype: 'audio/mpeg',
-				fileName: fileName(video.title || download.title, 'mp3'),
+				mimetype: ext === 'm4a' ? 'audio/mp4' : 'audio/mpeg',
+				fileName: fileName(video.title || download.title, ext),
 				contextInfo: {
 					externalAdReply: {
 						title: video.title || download.title || 'YouTube audio',

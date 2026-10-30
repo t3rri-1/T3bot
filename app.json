@@ -1,7 +1,7 @@
 {
 	"name": "t3rri",
-	"description": "Simple WhatsApp By Nova Team",
-	"logo": "https://avatars.githubusercontent.com/u/188756392?v=4",
+	"description": "Simple WhatsApp By T3rri",
+	"logo": "https://github.com/t3rri-1/T3bot/blob/main/media/t3.jpg",
 	"repository": "https://github.com/t3rri-1/T3bot",
 	"stack": "container",
 	"success_url": "/",
@@ -22,7 +22,7 @@
 		},
 		"BOT_INFO": {
 			"description": "Bot Owner, Bot Name, URL LOGO",
-			"value": "NovaTeam;Nova Bot;https://avatars.githubusercontent.com/u/188756392?v=4",
+			"value": "T3rri;T3rri Bot;https://github.com/t3rri-1/T3bot/blob/main/media/t3.jpg",
 			"required": false
 		},
 		"STICKER_PACK": {
