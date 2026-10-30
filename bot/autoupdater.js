@@ -1,29 +1,3 @@
-/**
- * Auto-updater
- *
- * Keeps the bot in sync with the git remote it was cloned from ("origin").
- * A folder uploaded without a .git directory (zip upload, panel hosts) is turned into a
- * checkout by the first check, see setupCheckout().
- *
- *   setup     no .git yet: init, fetch the remote, point HEAD at the commit this folder matches best
- *   check     git fetch, then compare HEAD with origin/<branch>
- *   download  fast-forward merge: never rewrites history, never overwrites local edits
- *   install   yarn/npm install, only when "dependencies" changed
- *   verify    syntax-check every changed .js file before restarting
- *   notify    status messages go to the bot's own chat
- *   rollback  a failed step, or a crash loop after the restart, returns to the old commit
- *   keep      your own files (config.js, .env, the database, the session ...) are never touched, see KEEP below
- *
- * Optional env vars
- *   UPDATE_INTERVAL  minutes between checks (default 30, minimum 5)
- *   UPDATE_BRANCH    branch to follow (default: the branch the bot is on, else the remote's default)
- *   UPDATE_REPO      where to update from, only used to set up a checkout (default: "repository" in
- *                    package.json). A URL, or owner/repo for GitHub. Private repos: https://user:token@github.com/owner/repo
- *   UPDATE_KEEP      more files or folders an update must never touch, comma separated (e.g. "notes.txt,data")
- *
- * Only Node built-ins are used here, so the supervisor in index.js can still roll back
- * after an update that breaks the rest of the code.
- */
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
@@ -45,9 +19,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const STATE_FILE = join(ROOT, '.update-state.json');
 const CHECK_EVERY = Math.max(5, Number(process.env.UPDATE_INTERVAL) || 30) * 60 * 1000;
-const MAX_CRASHES = 3; // worker crashes right after an update before it is rolled back
+const MAX_CRASHES = 3;
 const IS_WIN = process.platform === 'win32';
-// git refuses to stash without a committer identity, and a fresh container has none configured
 const ENV = {
 	...process.env,
 	GIT_TERMINAL_PROMPT: '0',
@@ -58,12 +31,9 @@ const ENV = {
 	GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || 'updater@localhost'
 };
 
-/* ───────────────────────────── helpers ───────────────────────────── */
-
 const short = sha => String(sha || '').slice(0, 7);
 const bt = text => `\`\`\`${text}\`\`\``;
 
-// remote URLs can carry tokens (https://user:token@host), keep them out of chat messages
 const scrub = text => String(text || '').replace(/(https?:\/\/)[^\s/@]+@/g, '$1***@');
 const tail = (text, max = 300) => {
 	const clean = scrub(text).trim();
@@ -86,16 +56,6 @@ const run = (cmd, args, options = {}) =>
 	});
 const git = (...args) => run('git', ['-c', 'safe.directory=*', ...args]);
 
-/* ───────────────────── files an update never touches ─────────────────────
-   Your own settings and data. An update never changes, replaces or removes them, even when the repository
-   changes or deletes the very same file. A folder keeps everything inside it.
-   Add your own with UPDATE_KEEP="notes.txt,data" (comma separated).
-
-   How: git cannot skip a file while it moves to a new commit, so right before it does (merge, stash, rollback)
-   the kept files it would touch are copied to .update-keep/ and put back to the committed state, which git can
-   move over without complaint; right after, the copies are written back. If the process dies in between, the
-   supervisor (index.js) writes them back on the next start, before the bot itself loads them. */
-
 const KEEP = [
 	'config.js',
 	'.env',
@@ -114,7 +74,6 @@ const KEEP = [
 	.map(entry => entry.trim().replace(/\\/g, '/').replace(/^\.?\//, '').replace(/\/+$/, ''))
 	.filter(Boolean);
 
-/** Is this path (relative to the bot folder, with forward slashes) one of the kept files? */
 export const isKept = file => KEEP.some(entry => file === entry || file.startsWith(`${entry}/`));
 
 const KEEP_DIR = join(ROOT, '.update-keep');
@@ -123,10 +82,6 @@ const KEEP_MANIFEST = join(KEEP_DIR, 'manifest.json');
 const listPaths = async (...args) =>
 	(await git(...args).catch(() => '')).split('\0').filter(Boolean);
 
-/**
- * Put the kept files git is about to touch aside. Those are the ones the move to `target` changes or deletes,
- * and the ones with edits of their own (a stash would take those away too). Does nothing when there are none.
- */
 const holdKept = async target => {
 	const files = [
 		...new Set([
@@ -136,14 +91,13 @@ const holdKept = async target => {
 	].filter(isKept);
 	if (!files.length) return;
 
-	// copy first, and write down what was copied, so that a crash can always be repaired
 	const saved = [];
 	for (const file of files) {
 		let stat;
 		try {
 			stat = lstatSync(join(ROOT, file));
 		} catch {
-			continue; // not in this folder
+			continue;
 		}
 		if (!stat.isFile()) continue;
 		const copy = join(KEEP_DIR, 'files', file);
@@ -154,7 +108,6 @@ const holdKept = async target => {
 	if (!saved.length) return;
 	writeFileSync(KEEP_MANIFEST, JSON.stringify({ files: saved }));
 
-	// now give git a clean tree for exactly those paths
 	try {
 		for (const { file } of saved) {
 			const inHead = await git('cat-file', '-e', `HEAD:${file}`).then(
@@ -174,16 +127,12 @@ const holdKept = async target => {
 	}
 };
 
-/**
- * Write the kept files back exactly as they were. Safe to call at any time, it does nothing when nothing is
- * held. Only Node built-ins and sync calls, so the supervisor can run it before the bot starts.
- */
 export const restoreKept = () => {
 	let manifest;
 	try {
 		manifest = JSON.parse(readFileSync(KEEP_MANIFEST, 'utf8'));
 	} catch {
-		return 0; // nothing is held
+		return 0;
 	}
 	let restored = 0;
 	for (const { file, mode } of manifest.files || []) {
@@ -194,11 +143,9 @@ export const restoreKept = () => {
 			try {
 				chmodSync(target, mode);
 			} catch {
-				// permissions are not supported everywhere
 			}
 			restored++;
 		} catch (err) {
-			// keep the copies, they are the only ones left
 			console.log(`[autoupdate] could not put ${file} back: ${err.message}. Your copy is in .update-keep/files/`);
 			return restored;
 		}
@@ -208,7 +155,6 @@ export const restoreKept = () => {
 	return restored;
 };
 
-/** Run a git step that moves HEAD (to `target`) while the kept files stay out of its way. */
 const withKept = async (target, step) => {
 	await holdKept(target);
 	try {
@@ -218,8 +164,6 @@ const withKept = async (target, step) => {
 	}
 };
 
-/* The state file survives restarts and rollbacks (it is untracked), and is shared by the
-   worker (installs, confirms) and the master (crash-loop rollback). */
 const readState = () => {
 	try {
 		return JSON.parse(readFileSync(STATE_FILE, 'utf8'));
@@ -258,7 +202,6 @@ const localPkg = () => {
 	}
 };
 
-// "https://user:token@github.com/me/bot.git" -> "github.com/me/bot"
 const prettyRemote = url =>
 	String(url || '')
 		.trim()
@@ -267,13 +210,6 @@ const prettyRemote = url =>
 
 const unsupported = message => Object.assign(new Error(message), { unsupported: true });
 
-/* ───────────────── turning an uploaded folder into a checkout ─────────────────
-   Hosts that deploy from a zip have no .git folder, so there is nothing to fetch into. The first
-   check builds one in place: init, add the remote, fetch its history, then point HEAD at the commit
-   whose files match this folder best. Files are never touched, so anything that differs shows up as
-   an ordinary local change, and from then on the normal update path applies. */
-
-// "git+https://github.com/me/bot.git" | "me/bot" | "github:me/bot" -> a URL git can fetch
 const normalizeRepoUrl = raw => {
 	const url = String(raw || '')
 		.trim()
@@ -290,19 +226,18 @@ const repoUrl = () => {
 const detectBranch = async url => {
 	if (process.env.UPDATE_BRANCH) return process.env.UPDATE_BRANCH;
 	try {
-		const out = await git('ls-remote', '--symref', url, 'HEAD'); // "ref: refs/heads/main<TAB>HEAD"
+		const out = await git('ls-remote', '--symref', url, 'HEAD');
 		return out.match(/^ref: refs\/heads\/(\S+)\s+HEAD$/m)?.[1] || 'master';
 	} catch (err) {
-		if (/unknown option|usage:/i.test(err.message)) return 'master'; // git older than 2.8 has no --symref
+		if (/unknown option|usage:/i.test(err.message)) return 'master';
 		throw err;
 	}
 };
 
-const SCAN_COMMITS = 300; // how far back to look for the commit this folder came from
-const SCAN_ENTRIES = 150_000; // ...and a ceiling on file entries held in memory, so a huge repo cannot exhaust a small host
+const SCAN_COMMITS = 300;
+const SCAN_ENTRIES = 150_000;
 const MAX_HASH_BYTES = 5 * 1024 * 1024;
 
-// the id git gives a file's content (sha1 of "blob <size>\0<content>"), computed here so no process is spawned per file
 const blobId = buffer =>
 	createHash('sha1')
 		.update(`blob ${buffer.length}\0`)
@@ -310,17 +245,16 @@ const blobId = buffer =>
 		.digest('hex');
 
 const treeOf = async sha => {
-	const files = new Map(); // path -> blob id
+	const files = new Map();
 	for (const entry of (await git('ls-tree', '-r', '-z', '--full-tree', sha)).split('\0')) {
 		const tab = entry.indexOf('\t');
 		if (tab < 0) continue;
 		const [mode, type, id] = entry.slice(0, tab).split(' ');
-		if (type === 'blob' && mode !== '120000') files.set(entry.slice(tab + 1), id); // 120000 = symlink
+		if (type === 'blob' && mode !== '120000') files.set(entry.slice(tab + 1), id);
 	}
 	return files;
 };
 
-/** The recent commit whose files are closest to this folder (the one it was uploaded from, if nothing was edited). */
 const findBase = async (ref, branch) => {
 	const revs = (await git('rev-list', `--max-count=${SCAN_COMMITS}`, ref)).split('\n').filter(Boolean);
 	if (!revs.length) throw unsupported(`the remote has no commits on "${branch}"`);
@@ -334,7 +268,6 @@ const findBase = async (ref, branch) => {
 		}
 	}
 
-	// every path that ever mattered, with the id of the file in this folder (null = not here)
 	const here = new Map();
 	for (const path of new Set(trees.flatMap(files => [...files.keys()]))) {
 		let id = null;
@@ -343,7 +276,6 @@ const findBase = async (ref, branch) => {
 			const stat = statSync(file);
 			if (stat.isFile()) id = stat.size > MAX_HASH_BYTES ? 'too-big' : blobId(readFileSync(file));
 		} catch {
-			/* not in this folder */
 		}
 		here.set(path, id);
 	}
@@ -352,7 +284,7 @@ const findBase = async (ref, branch) => {
 	trees.forEach((files, i) => {
 		let differs = 0;
 		for (const [path, id] of here) if ((files.get(path) ?? null) !== id) differs++;
-		if (!best || differs < best.differs) best = { sha: revs[i], differs }; // revs are newest first, so the newest wins a tie
+		if (!best || differs < best.differs) best = { sha: revs[i], differs };
 	});
 	return best;
 };
@@ -364,7 +296,7 @@ const setupCheckout = async () => {
 		throw unsupported('there is a .git folder here that git cannot use, delete it and the bot sets up a new one');
 	}
 
-	const branch = await detectBranch(url); // also proves the remote is reachable before anything is written
+	const branch = await detectBranch(url);
 	const ref = `refs/remotes/origin/${branch}`;
 	try {
 		await git('init', '--quiet').catch(err => {
@@ -378,13 +310,13 @@ const setupCheckout = async () => {
 
 		const base = await findBase(ref, branch);
 		await git('update-ref', `refs/heads/${branch}`, base.sha);
-		await git('reset', '--quiet'); // the index follows HEAD, the files stay exactly as they are
+		await git('reset', '--quiet');
 		patchState(s => {
 			s.bootstrap = { at: Date.now(), base: base.sha, differs: base.differs };
 		});
 		console.log(`[autoupdate] set up a git checkout from ${prettyRemote(url)} (${branch}) at ${short(base.sha)}, ${base.differs} file(s) differ`);
 	} catch (err) {
-		rmSync(join(ROOT, '.git'), { recursive: true, force: true }); // never leave a half-built checkout behind
+		rmSync(join(ROOT, '.git'), { recursive: true, force: true });
 		throw err;
 	}
 };
@@ -397,7 +329,6 @@ const bootstrapRepo = () => {
 	return settingUp;
 };
 
-/** create: set up a checkout when the folder has none (checks and status do, a rollback has nothing to undo). */
 const ensureRepo = async ({ create = false } = {}) => {
 	let top;
 	try {
@@ -426,11 +357,6 @@ const getBranch = async () => {
 const changedFiles = async (from, to) =>
 	(await git('diff', '--name-only', '-z', '--diff-filter=AMR', from, to)).split('\0').filter(Boolean);
 
-/**
- * Files this folder already has with exactly the content an update is about to write (typically the same change
- * was uploaded by hand before it was pushed): record them as updated, so git sees nothing in the way and the
- * merge leaves them alone. Nothing can be lost, the content is identical.
- */
 const adoptIdentical = async (from, to) => {
 	const changed = await changedFiles(from, to);
 	for (let i = 0; i < changed.length; i += 200) {
@@ -445,14 +371,12 @@ const adoptIdentical = async (from, to) => {
 			try {
 				same = blobId(readFileSync(join(ROOT, file))) === id;
 			} catch {
-				/* not in this folder */
 			}
 			if (same) await git('update-index', '--add', '--cacheinfo', `${mode},${id},${file}`);
 		}
 	}
 };
 
-// git lists the files it complains about as tab-indented lines under a header line
 const listedUnder = (output, header) => {
 	const files = [];
 	let inside = false;
@@ -464,7 +388,6 @@ const listedUnder = (output, header) => {
 	return files;
 };
 
-/** Syntax-check what an update changed, so a typo never gets as far as a restart. */
 const verify = async files => {
 	for (const file of files) {
 		const path = join(ROOT, file);
@@ -490,7 +413,6 @@ const installDeps = async () => {
 	const [cmd, args] = hasYarn
 		? ['yarn', ['install', '--production']]
 		: ['npm', ['install', '--omit=dev', '--no-audit', '--no-fund']];
-	// Capping npm/yarn's heap makes a too-big install fail (and roll back) instead of taking the whole container down.
 	const heapMB = Number(process.env.MAX_HEAP_MB) || 192;
 	await run(cmd, args, {
 		timeout: 15 * 60_000,
@@ -499,7 +421,11 @@ const installDeps = async () => {
 	});
 };
 
-/* ───────────────────────────── messages ───────────────────────────── */
+// FIX: detect a diverged branch (HEAD has commits not in `to`) so we don't rely on --ff-only.
+const divergedFrom = async (from, to) => {
+	const ahead = await git('rev-list', '--count', `${to}..${from}`).then(Number).catch(() => 0);
+	return ahead > 0;
+};
 
 const changeList = (commits = [], total = commits.length) => {
 	const lines = commits.slice(0, 10).map((c, i) => bt(`${i + 1}. ${c.message}`));
@@ -529,9 +455,12 @@ export const describeResult = (res, prefix = '.') => {
 				`*Reason:* ${bt(res.error)}`
 			);
 		case 'blocked':
+			// FIX: clearer message for divergence / conflict, and mention the force option.
 			return (
 				`⚠️ *Update blocked*\n${bt(res.error)}` +
-				(res.conflict && !res.forced ? `\n_Your own edits are in the way. Send ${prefix}update now to stash them and update._` : '')
+				(res.conflict && !res.forced
+					? `\n_Your checkout has diverged from origin or has edits in the way. Send ${prefix}update now to force it._`
+					: '')
 			);
 		case 'busy':
 			return bt('Another update is already running');
@@ -554,9 +483,6 @@ const notify = async (client, text) => {
 	}
 };
 
-/* ───────────────────────────── core ───────────────────────────── */
-
-/** Fetch the remote and report whether it is ahead of this checkout. */
 export const checkForUpdate = async () => {
 	await ensureRepo({ create: true });
 	const branch = await getBranch();
@@ -581,7 +507,6 @@ export const checkForUpdate = async () => {
 	return { available: behind > 0, current, latest, branch, behind, commits, bad: (state.bad || []).includes(latest) };
 };
 
-/** Go back to the commit an update started from (used after a failed or crashing update). */
 const rollbackPending = async (pending, reason) => {
 	await withKept(pending.from, () => git('reset', '--keep', pending.from));
 	if (pending.depsChanged) {
@@ -596,12 +521,6 @@ const rollbackPending = async (pending, reason) => {
 
 let busy = false;
 
-/**
- * Download + install the update found by checkForUpdate().
- * Does not restart: when status is "updated" the caller restarts the bot (see restartBot).
- *   force  also stash local changes that stand in the way (manual `update now` only)
- * status: updated | uptodate | blocked (nothing changed) | failed (rolled back) | busy
- */
 export const installUpdate = async ({ info, force = false } = {}) => {
 	if (busy) return { status: 'busy' };
 	busy = true;
@@ -614,7 +533,6 @@ export const installUpdate = async ({ info, force = false } = {}) => {
 		const depsChanged = depsKey(oldPkg) !== depsKey(newPkg);
 		const version = [oldPkg.version, newPkg.version];
 
-		// From here on a kill or crash is detectable: the marker says an update was in progress.
 		patchState(s => {
 			s.pending = { from, to, phase: 'installing', by: process.pid, at: Date.now(), crashes: 0, depsChanged, version, commits, behind };
 			delete s.notice;
@@ -623,20 +541,40 @@ export const installUpdate = async ({ info, force = false } = {}) => {
 		let merged = false;
 		let stashed = false;
 		try {
-			// the kept files (config.js, .env ...) are held aside for the whole step: the merge and a stash never see them
 			await withKept(to, async () => {
 				await adoptIdentical(from, to);
+
+				// FIX: handle a diverged branch — fast-forward is impossible when HEAD is ahead.
+				const diverged = await divergedFrom(from, to);
+				if (diverged) {
+					if (!force) {
+						// Try to stash so the user's committed/working work isn't lost.
+						const label = `nova-autoupdate ${short(to)}`;
+						const out = await git('stash', 'push', '-m', label).catch(() => '');
+						stashed = !/No local changes/i.test(out);
+						if (!stashed) {
+							const err = new Error(
+								'your branch has diverged from origin; send "update now" to force it'
+							);
+							err.diverged = true;
+							throw err;
+						}
+					}
+					await git('reset', '--hard', to);
+					merged = true;
+					return;
+				}
+
 				try {
 					await git('merge', '--ff-only', to);
 				} catch (err) {
 					if (!force || !/overwritten/i.test(`${err.stderr || ''} ${err.message}`)) throw err;
 					const label = `nova-autoupdate ${short(to)}`;
-					const out = await git('stash', 'push', '-m', label); // edits to tracked files
+					const out = await git('stash', 'push', '-m', label);
 					stashed = !/No local changes/i.test(out);
 					try {
 						await git('merge', '--ff-only', to);
 					} catch (again) {
-						// files of your own that the update also creates, with different content: stash those too
 						const files = listedUnder(again.stderr, /untracked working tree files/i);
 						if (!files.length) throw again;
 						await git('stash', 'push', '--include-untracked', '-m', label, '--', ...files);
@@ -650,25 +588,28 @@ export const installUpdate = async ({ info, force = false } = {}) => {
 			await verify((await changedFiles(from, to)).filter(file => !isKept(file)));
 		} catch (err) {
 			try {
-				if (merged) await withKept(from, () => git('reset', '--keep', from));
-				else await git('reset', '--quiet').catch(() => {}); // undo what adoptIdentical() recorded, the files themselves are untouched
+				// FIX: --hard is the correct rollback when the tree may have been force-reset.
+				if (merged) await withKept(from, () => git('reset', '--hard', from));
+				else await git('reset', '--quiet').catch(() => {});
 				if (stashed) await git('stash', 'pop').catch(() => {});
 				if (merged && depsChanged) await installDeps().catch(() => {});
 			} catch (rollbackErr) {
-				// marker stays, so the next boot (or the supervisor) tries the rollback again
 				return { status: 'failed', from, to, error: err.message, rollbackError: rollbackErr.message };
 			}
 			patchState(s => {
 				delete s.pending;
 				if (merged) markBad(s, to);
 			});
-			const conflict = !merged && /overwritten/i.test(`${err.stderr || ''} ${err.message}`);
+			// FIX: also treat the diverged case as "conflict" so the message tells the user to force.
+			const conflict =
+				!merged &&
+				(/overwritten/i.test(`${err.stderr || ''} ${err.message}`) || err.diverged === true);
 			return { status: merged ? 'failed' : 'blocked', from, to, error: err.message, conflict, forced: force };
 		}
 
 		patchState(s => {
 			s.pending.phase = 'restarting';
-			s.pending.expectExit = true; // the exit we are about to cause is not a crash
+			s.pending.expectExit = true;
 			s.pending.stashed = stashed;
 		});
 		return { status: 'updated', from, to, version, commits, behind, stashed, depsChanged };
@@ -677,7 +618,6 @@ export const installUpdate = async ({ info, force = false } = {}) => {
 	}
 };
 
-/** Manual rollback to the version that was running before the last update. */
 export const rollbackUpdate = async () => {
 	if (busy) return { status: 'busy' };
 	busy = true;
@@ -691,7 +631,7 @@ export const rollbackUpdate = async () => {
 		await withKept(previous, () => git('reset', '--keep', previous));
 		if (depsKey(now) !== depsKey(before)) await installDeps();
 		patchState(s => {
-			markBad(s, current); // so the auto-updater does not instantly install it again
+			markBad(s, current);
 			s.lastGood = previous;
 			delete s.previous;
 		});
@@ -701,9 +641,8 @@ export const rollbackUpdate = async () => {
 	}
 };
 
-/** Exit so the master process starts a fresh worker running the new code. */
 export const restartBot = async () => {
-	await new Promise(done => setTimeout(done, 1500)); // let the last message leave first
+	await new Promise(done => setTimeout(done, 1500));
 	process.exit(0);
 };
 
@@ -717,8 +656,6 @@ export const updateStatus = async () => {
 		status.remote = prettyRemote(await git('remote', 'get-url', 'origin'));
 		status.current = await git('rev-parse', 'HEAD');
 		status.version = localPkg().version;
-		// files here that differ from the commit above; an update that touches one of them needs `update now`
-		// (your kept files are not counted: an update never touches them)
 		status.dirty = (await listPaths('diff', '--name-only', '-z', '--no-renames', 'HEAD')).filter(file => !isKept(file)).length;
 	} catch (err) {
 		status.supported = false;
@@ -727,16 +664,9 @@ export const updateStatus = async () => {
 	return status;
 };
 
-/* ───────────────────── health check + crash-loop rollback ───────────────────── */
-
-/**
- * Master process (index.js): called every time the worker exits.
- * The master keeps running the old code in memory, so it can undo an update whose new code
- * cannot even start (syntax error, bad import) and would otherwise crash forever.
- */
 export const onWorkerExit = async () => {
 	try {
-		restoreKept(); // the worker may have died while it held your files aside
+		restoreKept();
 		const { pending } = readState();
 		if (!pending) return;
 		if (pending.expectExit) {
@@ -759,13 +689,9 @@ export const onWorkerExit = async () => {
 	}
 };
 
-/**
- * Worker: runs once WhatsApp is connected. A connected bot means the update works, so the
- * marker is cleared and the owner hears how it went (including rollbacks done by the master).
- */
 export const confirmUpdate = async client => {
 	const { pending } = readState();
-	if (pending?.by === process.pid) return; // this process is the one still installing
+	if (pending?.by === process.pid) return;
 
 	let interrupted = false;
 	if (pending?.phase === 'installing') {
@@ -785,23 +711,17 @@ export const confirmUpdate = async client => {
 	});
 	if (state.notice) await notify(client, state.notice);
 	if (state.pending) await notify(client, completeText(state.pending));
-	if (interrupted) await restartBot(); // files changed under a running process, start clean
+	if (interrupted) await restartBot();
 };
 
-/* ───────────────────────────── scheduler ───────────────────────────── */
+let announced = null;
 
-let announced = null; // what the owner was last told, so every check does not repeat itself
-
-/**
- * One check. mode: "on" installs, "notify" only tells the owner, anything else does nothing.
- * Throws when updates are unsupported here or the remote cannot be reached.
- */
 export const runAutoUpdate = async (client, { getMode = async () => 'on', getPrefix = async () => '.' } = {}) => {
 	const mode = await getMode().catch(() => 'off');
 	if (mode !== 'on' && mode !== 'notify') return;
 
 	const info = await checkForUpdate();
-	if (!info.available || info.bad) return; // bad = this exact commit already failed here
+	if (!info.available || info.bad) return;
 
 	const tell = async (key, text) => {
 		if (announced === key) return;
@@ -824,7 +744,6 @@ export const runAutoUpdate = async (client, { getMode = async () => 'on', getPre
 let firstCheck = null;
 let timer = null;
 
-/** Call when the WhatsApp connection opens. Safe to call again on every reconnect. */
 export const AutoUpdater = async (client, options = {}) => {
 	restoreKept();
 	await confirmUpdate(client).catch(err => console.log('[autoupdate]', err.message));
@@ -849,7 +768,7 @@ export const AutoUpdater = async (client, options = {}) => {
 		}
 	};
 
-	firstCheck = setTimeout(tick, 30_000 + Math.random() * 60_000); // spread out many bots
+	firstCheck = setTimeout(tick, 30_000 + Math.random() * 60_000);
 	timer = setInterval(tick, CHECK_EVERY);
 	firstCheck.unref?.();
 	timer.unref?.();
