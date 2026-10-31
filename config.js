@@ -3,8 +3,8 @@ dotenv.config();
 
 const config = {
 	
-	SESSION_ID: process.env.SESSION_ID || 'T3RRI_77_88_84',
-	SUDO: process.env.SUDO || '254784937112',
+	SESSION_ID: process.env.SESSION_ID || 'T3RRI_77_83_04',
+	SUDO: process.env.SUDO || '50955112990',
 	API_ID: process.env.API_ID || 'https://xstro-api-4fb28ece11a9.herokuapp.com',
 	BOT_INFO: process.env.BOT_INFO || 'T3rri;T3rri Bot',
 	STICKER_PACK: process.env.STICKER_PACK || 'Made by;TMulti Device Bot',
